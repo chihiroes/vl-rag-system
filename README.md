@@ -9,10 +9,10 @@
 VL-RAG-System 是一个集成了 **多模态大语言模型 (Qwen-VL)**、**RAG (检索增强生成)** 和 **ROS 2 机器人框架** 的智能导览系统。该系统旨在赋予实体机器人（如“技心”）在展厅环境中的视觉感知、专业知识检索和具有情感美学的交互能力。
 
 ### 核心特性
-- **视觉识别与对齐**: 利用 Qwen-VL 模型实时分析展品图像。
+- **视觉识别与对齐**: 利用 Qwen-VL 模型实时分析展馆现场图像。
 - **专业知识检索**: 基于 ChromaDB + BGE 嵌入模型的 RAG 系统，提供 80+ 件展品的深度背景知识。
 - **人格化叙事**: 通过高度定制的 `Ji Xin` (技心) 人设协议，实现沉静、具有技术美感且自然的对话风格。
-- **全链路集成**: 覆盖从 ASR (语音识别) 到 LLM 推理再到 TTS (语音合成) 的完整机器人交互闭环。
+- **全链路集成**: 在 **Ubuntu** 环境下实现从 ASR 到 LLM 推理再到 TTS 的完整机器人交互闭环。
 
 ---
 
@@ -38,53 +38,58 @@ vl-rag-system/
 
 ---
 
-## 🚀 快速开始
+## 🛠️ 环境要求 (Prerequisites)
 
-### 1. 环境准备
-确保您的环境中已安装 Python 3.8+ 和 ROS 2，并安装必要的依赖：
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. 模型部署
-系统依赖 [Ollama](https://ollama.com/) 运行 Qwen-VL 模型。请先启动 Ollama 服务并拉取模型：
-
-```bash
-ollama run qwen2.5:1.5b # 或您配置的其他版本
-```
-
-### 3. 系统启动
-使用内置脚本一键启动 ROS 各核心节点：
-
-```bash
-./start_all.sh
-```
-
-同时启动 FastAPI 后端提供 Web 接口支持：
-
-```bash
-python main.py
-```
+*   **操作系统**: **Ubuntu 22.04 LTS** (推荐) 或更高版本。
+*   **机器人框架**: ROS 2 Humble (必须在 Ubuntu 下运行)。
+*   **资源映射**: 
+    - **Mode A (PC 调试)**: 支持 Windows (WSL2) 或 Linux。
+    - **Mode B (实机交互)**: 必须运行在原生 Linux 或双系统的 Ubuntu 环境中。
 
 ---
 
-## 🛠️ 配置说明
+## 🚀 启动指引 (Getting Started)
 
-所有的核心配置（如 API 密钥、文件路径、检索参数）均在根目录下的 `config.py` 中进行统一管理。建议通过环境变量配置敏感信息：
+本项目支持两种独立的运行模式，分别适配不同的开发与部署需求：
 
-- `XF_APPID`: 讯飞语音服务 APPID
-- `XF_API_KEY`: 讯飞语音服务 APIKey
-- `XF_API_SECRET`: 讯飞语音服务 APISecret
+### 模式 A：PC 本地调试 (PC Debugging Mode)
+**适用场景**：在开发机（Windows/Linux/WSL）上快速验证 RAG 检索效果、模型回答质量或 UI 交互逻辑。
+1.  **环境准备**: 确保 Python 环境已安装 `requirements.txt`。
+2.  **启动后端**:
+    ```bash
+    python main.py
+    ```
+3.  **开始调试**: 通过前端页面或调用 `http://localhost:8000/chat` 与系统交互。**此模式不依赖 ROS 2 环境。**
+
+### 模式 B：机器人实机交互 (Robot Interaction Mode)
+**适用场景**：部署在机器人板卡（如 Orin/Jetson）上，利用 ASR/Vision 硬件进行实时的实景导览交互。
+1.  **环境准备**: 确保已进入 ROS 2 工作空间环境。
+2.  **一键启动**:
+    ```bash
+    chmod +x start_all.sh
+    ./start_all.sh
+    ```
+    该脚本将依次拉起：ASR 语音识别节点 🎙️ ⮕ Vision 图像采集节点 📸 ⮕ Robot Brain 核心处理器 🧠。
+3.  **运行监控**: 日志将实时汇总记录在根目录下的 `service.log` 中。
 
 ---
 
-## 📖 交互流程
+## ⚙️ 配置说明 (Configuration)
 
-1. **感知**: 机器人通过 `rviz_image_capture_node.py` 获取当前视野快照。
-2. **输入**: 用户通过语音提问，`voice_to_text.py` 将语音转化为文字。
-3. **思考**: `local_model_processor.py` 触发 RAG 检索并调用 Qwen-VL 产生具备人设特征的回复。
-4. **输出**: 语音合成模块将文字转化为音频并由机器人播出，同时 Web 前端实时展示对话内容。
+所有的核心配置（如 API 密钥、文件路径、模型参数）均在根目录下的 **`config.py`** 中统一管理。
+- **路径对齐**: 采用 `pathlib` 动态计算路径，完美适配 Windows 与 Linux 环境。
+- **统一日志**: 调用 `Config.setup_logging()` 可实现全系统日志向 `service.log` 的实时写入。
+
+---
+
+## 📖 交互流程对比 (Interaction Flow)
+
+| 流程阶段 | 模式 A (PC 本地调试) | 模式 B (机器人模式) |
+| :--- | :--- | :--- |
+| **感知 (Input)** | 用户手动上传图片 / 输入文字 | `vision_service.py` 自动抓拍快照 |
+| **触发 (Trigger)** | FastAPI 端点 `/chat` 接收 HTTP 请求 | `asr_service.py` 监听语音并发布到 ASR 话题 |
+| **思考 (Brain)** | `LLMService` 在 FastAPI 线程内同步推理 | `local_model_processor.py` 响应话题并流式推理 |
+| **输出 (Output)** | HTTP 回包返回完整文本 | `tts_service.py` 生成 MP3 并下发机器人播放指令 |
 
 ---
 
