@@ -24,9 +24,10 @@
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| POST | /api/rag/search | 纯检索测试。Body: {query: str, top_k: int} |
-| POST | /api/rag/ingest | 手动向向量数据库注入新知识条目 |
-| GET | /api/rag/stats | 获取当前馆内展品数据的覆盖统计信息 |
+| POST | /api/rag/search | 多阶段RAG检索（向量检索 + 混合检索 + 重排序） |
+| POST | /api/rag/rerank | 对候选结果进行重排序 |
+| POST | /api/rag/ingest | 向知识库注入结构化数据（支持chunk） |
+| GET | /api/rag/stats | 获取知识库统计信息 |
 
 ---
 
