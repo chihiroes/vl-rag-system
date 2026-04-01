@@ -38,11 +38,12 @@
 
 ### 2.1 检索系统 (Retrieval System)
 **文件**: `rag/retriever.py`  
-**职责**: 负责从向量知识库中召回与当前问题最相关的展品专业背景。
+**职责**: 基于结构化知识库执行多阶段RAG检索流程，从知识库中召回与当前问题最相关的展品信息，并通过混合检索与重排序机制提升检索结果的准确性与相关性。
 
 **核心接口**:
-- `retrieve(query, top_k)` — 根据查询文本返回最相关的知识片段
-- `rebuild_index()` — 重新构建向量索引数据库
+- `retrieve(query, top_k)` — 执行完整检索流程（向量检索 + 可选BM25 + 重排序），返回相关知识片段  
+- `rerank(query, candidates)` — 对候选结果进行语义重排序  
+- `get_stats()` — 获取知识库统计信息
 
 ### 2.2 记忆系统 (Memory System)
 **文件**: `services/memory_service.py`  
