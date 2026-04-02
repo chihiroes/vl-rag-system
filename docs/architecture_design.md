@@ -36,9 +36,19 @@
 
 ### 3.2 认知引擎模块 (Cognitive Engines)
 #### 3.2.1 检索系统 (Retrieval System)
-- **文件**: `rag/retriever.py`
-- **职责**: 负责从向量知识库中召回与当前问题最相关的展品专业背景。
-- **核心接口**: `retrieve(query, top_k)`, `rebuild_index()`
+- **目录位置**: `rag/`  
+- **职责**:  负责知识库的构建（离线）与查询（在线），实现从数据入库到多阶段RAG检索的完整流程。
+- **核心子模块**:
+1.  **Data Ingestion（数据构建层）**:  
+  - `rag/ingest.py` — 从结构化数据构建文本向量数据库  
+  - `rag/build_vector_db_new.py` — 构建图像特征向量数据库  
+2.  **Retrieval Engine（在线检索层）**:  
+  - `rag/retriever.py` — 执行向量检索、混合检索及重排序流程  
+
+**核心接口**:
+- `retrieve(query, top_k)` ⮕ 执行完整检索流程并返回相关知识片段  
+- `rerank(query, candidates)` ⮕ 对候选结果进行语义重排序  
+- `get_stats()` ⮕ 获取知识库统计信息  
 
 #### 3.2.2 记忆系统 (Memory System)
 - **目录位置**: `memory/` (根文件夹)
