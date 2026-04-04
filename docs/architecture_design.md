@@ -33,24 +33,58 @@
 
 ### 3.1 系统总控与 API 层 (Orchestration & API)
 - **文件**: `local_model_processor.py`, `api/routers/`
-- **职责**: 负责 WebSocket 连接维护、分发请求至 Agent 以及执行同步/异步双环路由。
+- **职责**: 作为“中枢神经”，协调感知输入、智能决策与执行层调度。维护全局状态机，负责会话启动与分发。
+- **持有的子系统**: Language, Retrieval, Memory, Resonance, Vision, Hearing, TTS.
 - **关键接口**:
+    - `start_orchestration()`: 系统全局启动与节点健康检查。
     - `dispatch(query: str, image: bytes) -> Stream`: 分发原始输入并返回流式响应。
-    - `identify_intent(query: str) -> Intent`: (核心细节) 语义意图识别，决定后续路由。
+    - `identify_intent(query: str) -> Intent`: 语义意图识别，决定后续路由。
+    - `process_input(input_data)`: 原始输入预处理与多模态对齐。
+    - `reset_session()`: 重置当前会话上下文与 Agent 状态。
     - `handle_async_reflection(chat_history: list) -> None`: 触发后台内省任务。
 
 ### 3.2 认知引擎模块 (Cognitive Engines)
 #### 3.2.1 检索引擎 (Retrieval Engine)
-- **职责**: **“底层技术插件”**。专门负责向量数据库的原子搜索、重排序与语义对齐。
 - **定位**: **检索为记忆服务**。它不直接对接代理层，仅作为记忆系统的基础设施。
-- **各引擎组件 (Engine Components)**:
-    - **`StaticRAGProvider`**: 展品专业库向量匹配。
-    - **`InsightArchiveProvider`**: 同步读取见解库向量。
-    - **`UserGroupProvider`**: 匹配特定群体的配置信息。
-- **核心接口 (针对记忆层内部)**:
-    - **`vector_search(query: str, collection: str)`**: 原子级向量召回。
-    - **`fuse_knowledge(chunks: list) -> str`**: 结果融合与语义压制。
-    - `rebuild_index()`: 索引维护。
+- **职责**: 负责知识库的构建（离线）与查询（在线），实现从数据入库到多路 RAG 检索的完整流程。
+
+**1. 数据构建层 (Data Ingestion)**:
+- **`rag/ingest.py`**: 从结构化数据构建文本向量数据库（ChromaDB）。
+- **`rag/build_vector_db_new.py`**: 构建图像特征向量数据库（多模态对齐）。
+
+**2. 检索引擎层 (Search Infrastructure)**:
+- **设计模式**: **提供者模式 (Provider Pattern)** —— 并行调度多仓库检索并输出原子结果。
+- **引擎组件 (Engine Components)**:
+    - **`StaticRAGProvider`**: 调用由 `ingest.py` 构建的 80+ 展品专业库。
+- **数据结构定义 (Static Entity)**:
+```python
+class Exhibit(BaseModel):
+    """静态展品实体模型"""
+    exhibit_id: str               # 展品 ID (如: "robot_001")
+    name: str                     # 展品名称 (如: "双子星机器人")
+    location: str                 # 物理位置 (如: "一楼 A 厅 102 号")
+    era_period: Optional[str]     # 历史年代或所属技术时代
+    category: str                 # 类别 (如: "服务类机器人")
+    description: str              # 核心背景介绍文本 (用于生成检索内容)
+    technical_params: Dict        # 技术参数 (如: {"height": "170cm", "weight": "60kg"})
+    related_tags: List[str]       # 语义标签 (如: ["双足", "空间导览"])
+```
+    - **`InsightArchiveProvider`**: (见解检索) **仅检索 LLM 抽取的结论/见解**（向量库 B）。它不搜原话，而是搜机器人对用户的“认知总结”。
+    - **`UserGroupProvider`**: 匹配并提取预设的群体配置（风格库）。
+- **核心接口 (针对内部调用)**:
+    - **`vector_search(query: str, collection: str)`**: 针对特定集合的原子召回。
+    - **`rerank(query, candidates)`**: (关键环节) 对多路回传的候选结果进行深度语义重排序。
+    - **`fuse_knowledge(chunks: list) -> str`**: 将多路信息打碎、去重并融合成一段文字。
+    - **`get_stats()`**: 统计知识库中有多少展品、多少条见解等数据。
+    - **`rebuild_index()`**: 索引增量维护。
+
+- **【通俗易懂】架构是怎么升级的？**:
+    - **从“手动脚本”变成“自动流水线”**: 以前我们需要手动跑 `ingest.py` 来存数据。现在这些脚本被我们变成了系统的“数据加工厂”（离线部分）。而机器人聊天时，我们会用一个“智能调度员”（`RetrievalOrchestrator`）来自动并发调用所有数据。
+    - **从“一个库”变成“三路并发”**: 系统不再只搜展品库，而是同时开辟了三条检索专线：
+        1.  **静态展品路 (Static)**: 调用原来的 RAG，搜展品背景。
+        2.  **对话见解路 (Insight)**: 调用见解库，搜 **LLM 提炼出的结论性见解**（比如“用户喜欢喝浓茶”），而不是搜聊天的原话。
+        3.  **用户群体路 (Profiles)**: 调用画像库，匹配该群体的聊天风格。
+    - **每个库都有自己的“搜索专员”**: 检索引擎为每一类记忆都量身定制了 `search` 接口和处理类（Provider）。这意味着不管是查历史、找配置还是翻资料，都有专门的通道，解决了以前 RAG 逻辑大杂烩的问题。
 
 - **接口定义示例 (Python)**:
 ```python
@@ -119,42 +153,69 @@ class InsightEntry(BaseModel):
 
 **核心子模块与接口 (记忆 Hub 接口层)**:
 - **定位**: **记忆对外提供服务**。作为代理层获取与存储信息的唯一官方入口。
-1.  **记忆获取接口 (Read)**:
-    - **`recall(query: str, user_id: str) -> List`**: (业务感知) 内部调用检索引擎进行多路回想。
-    - **`get_group_config(group_id: str)`**: (配置读取) 获取该群体的交互风格与配置。
-    - **`fetch_session(session_id: str)`**: (上下文调取) 调取本轮对话历史。
-2.  **记忆持久化接口 (Write)**:
-    - **`commit_insight(entry: InsightEntry)`**: (写接口) 异步写入新产生的交互见解。
-    - **`save_group_profile(profile: UserGroupProfile)`**: (写接口) 定义或更新群体交互策略。
-    - **`match_group(user_features: dict)`**: 基于特征匹配 ID。
-3.  **核心文件**: `memory/static_rag.py`, `memory/insight_archive.py`, `memory/user_group_profiles.py`
+**核心子模块与接口清单**:
+
+#### **1. 短期记忆层 (Short-term Memory)**
+- **文件**: `memory/short_term_memory.py`
+- **职责**: 负责当前会话原始对话的实时存取与生命周期管理（JSON 缓存）。
+- **核心接口**:
+    - **`add_chat_history(role: str, content: str) -> None`**: 向缓存中追加一条原始对话记录。
+    - **`get_raw_history(session_id: str) -> List[dict]`**: 获取当前会话的所有原始对话列表。
+    - **`clear_chat_history(session_id: str) -> bool`**: 清空当前会话缓存（如切换用户或结束交谈时）。
+    - **`get_history_count() -> int`**: 获取当前已缓存的对话轮数。
+
+#### **2. 长期见解层 (Insight Archive)**
+- **文件**: `memory/insight_archive.py`
+- **职责**: 存储由 LLM 异步提炼的用户个性化见解与结论（向量库 B）。
+- **核心接口**:
+    - **`commit_insight(entry: InsightEntry) -> bool`**: 异步持久化一条新的见解条目。
+    - **`search_insights(query_vector: list, top_k: int) -> List`**: (底层的向量召回) 供内部检索使用。
+    - **`delete_insight(insight_id: str)`**: 删除错误的或过时的见解。
+
+#### **3. 长期画像层 (User Group Profiles)**
+- **文件**: `memory/user_group_profiles.py`
+- **职责**: 维护用户群体的审美偏好、交流风格及类别配置。
+- **核心接口**:
+    - **`get_group_config(group_id: str) -> UserGroupProfile`**: 根据 ID 获取完整的群体配置。
+    - **`match_group(user_features: dict) -> str`**: 根据感知层提供的特征（如年龄段、打扮）匹配最接近的群体 ID。
+    - **`save_group_profile(profile: UserGroupProfile) -> None`**: 录入或更新某个群体的全局配置参数。
+    - **`list_all_groups() -> List[str]`**: 列出当前系统中支持的所有群体类别。
+
+#### **4. 记忆总线与对外服务 (Memory Hub)**
+- **职责**: 记忆系统的对外“唯一柜台”，屏蔽底层存储细节。
+- **核心接口**:
+    - **`recall(query: str, user_id: str) -> List`**: (业务读) 统一触发“多路回想”逻辑（联动手感检索引擎）。
+    - **`sync_persistence()`**: 定时或强制触发所有内存数据落盘。
 
 #### 3.2.3 共鸣引擎 (Resonance Engine)
 - **文件**: `services/resonance_engine.py`
 - **职责**: 实现“技心”人设的人格化算法，调节回应的情感质感与美学比重。
-- **核心接口**: `calculate_vibe(text_input)`, `apply_persona_filter(raw_response)`
+- **核心子模块**:
+    1.  **人格化滤镜**: 基于“技心”人设协议（Prompts），对 LLM 生成的原始文本进行倾向性调节。
+    2.  **情感共鸣计算**: 评估用户输入的情感分值 (Vibe)，动态调整机器人回复的情绪强度。
+    3.  **美学比重控制**: 在“技术准确度”与“情感表现力”之间寻找动态平衡点。
+- **核心接口**:
+    - `calculate_vibe(text_input, user_profile)`: 评估情感共鸣分值。
+    - `apply_persona_filter(raw_response, context)`: 通过人设协议进行滤镜化处理。
+    - `get_persona_config()`: 获取当前活跃的人设参数。
+    - `update_persona_config(config)`: 动态调整情感系数与回复风格。
 
 ### 3.3 代理层 (Agent Layer)
-代理层作为整个系统的业务大脑，根据交互场景选择最合适的智能体模块进行响应。其内部遵循 **Perceive-Retrieve-Plan-Execute-Context-Reflect** 的六步认知循环框架。
+- **职责**: 代理层作为整个系统的业务大脑，负责任务分解、策略路由与认知循环执行。
+- **内部核心 Agent 单元 (Functional Roles)**:
+    1.  **SceneAnalyzerAgent**: 环境与展品视觉分析，对应 **Perceive** 阶段，识别场景中的关键特征。
+    2.  **DialogueAgent**: 对话策略与人设维护，对应 **Plan** 阶段，确保语义流畅。
+    3.  **ActionAgent**: 机器人动作与播放规划，对应 **Execute/Context** 阶段，协调物理肢体行为。
 
-- **核心数据结构**:
-    - **`PerceptionResult`**: `{intent, entities, scene_description, objects_detected}`
-    - **`PlanningResult`**: `{selected_agent, internal_thought, reasoning_chain}`
+- **交互场景分类 (Scene Agents)**:
+    - **Exhibit Intro Agent**: 提供专业化、权威的展品背景讲解。
+    - **Deep Chat Agent**: 跨轮次的深度语义探讨。
+    - **Small Talk Agent**: 负责身份认同、日常寒暄及情感抚慰。
 
-> [!NOTE]
-> 详细的认知循环定义与各个阶段的逻辑细节请参考：[认知引擎设计文档 (Cognition Engine)](cognition_engine.md)
-
-#### 3.3.1 展品介绍代理 (Exhibit Intro Agent)
-- **职责**: 结合 RAG 检索结果与实况视觉特征，提供专业化、权威的展品背景讲解。
-- **关键逻辑**: 事实对齐 (Fact Alignment) + 展示互动引导。
-
-#### 3.3.2 深度聊天代理 (Deep Chat Agent)
-- **职责**: 利用记忆系统及复杂的推理链条，与用户进行深度、跨轮次的语义探讨。
-- **关键逻辑**: 多轮上下文感知 (Context-Awareness) + 知识图谱扩展。
-
-#### 3.3.3 闲聊代理 (Small Talk Agent)
-- **职责**: 负责身份认同、日常寒暄及情感抚慰。
-- **关键逻辑**: 人格化 Prompt 注入 + 情感共鸣算法输出。
+- **核心接口**:
+    - `register_agent(name, agent)` ⮕ 注册新的 Agent 实例。
+    - `execute_agent(name, task, context)` ⮕ 发起单次 Agent 执行任务。
+    - `coordinate_agents(task, context)` ⮕ 跨 Agent 协作完成复杂任务。
 
 ### 3.4 感知与执行模块 (Perception & Execution)
 #### 3.4.1 视觉系统 (Vision System)
@@ -164,16 +225,29 @@ class InsightEntry(BaseModel):
 
 #### 3.4.2 听觉系统 (Hearing System)
 - **文件**: `services/asr_service.py`
-- **职责**: 负责音频降噪、语义断句及文字转化 (ASR)。
-- **核心接口**: `start_listening()`, `stop_listening()`
+- **职责**: 负责音频采集、断句及文字转化 (ASR)，将语音输入转化为可处理文本。
+- **核心子模块**:
+    1.  **音频流处理**: 实现低延迟的音频捕获与信号增益。
+    2.  **云端 API 集成**: 支持百度语音、腾讯云等高精度 ASR 服务。
+    3.  **本地备用模式**: 在网络异常时切换至轻量级本地识别模型。
+- **核心接口**:
+    - `start_listening()`: 开启麦克风监听。
+    - `stop_listening()`: 停止监听并返回文本。
+    - `set_api_config(config)`: 配置云端识别参数。
+    - `switch_recognition_mode(mode)`: 在云端与本地模式间切换。
 
 #### 3.4.3 语言系统 (Language System)
 - **文件**: `services/llm_service.py`
-- **职责**: 负责大模型的底层调用、流式输出管理及代理提示词注入。
+- **职责**: 负责大模型的底层调用、流式输出管理及提示词注入。
+- **核心子模块**:
+    1.  **多模态处理**: 支持图像 + 文本的混合推理输入。
+    2.  **流式输出管理**: 实现实时打字机响应效果。
+    3.  **提示词工程**: 自动化管理 Agent 各阶段的 Prompts。
 - **核心接口**:
-    - `generate_stream(prompts, history)`: 发起流式回复。
-    - `on_generation_complete(history)`: (钩子函数) 触发异步内省逻辑。
-    - `generate_sync(prompts)`: 发起同步调用。
+    - `generate_stream(prompts, history, image_data)`: 发起模型预测。
+    - `on_generation_complete(history)`: 触发异步内省逻辑。
+    - `load_model(model_config)`: 加载特定参数的大模型。
+    - `get_model_status()`: 监控显存与资源占用。
 
 ### 3.5 执行控制层 (Execution Layer)
 #### 3.5.1 行为控制器 (Behavior Controller)
@@ -248,3 +322,5 @@ vl-rag-system/
 | **向量数据库** | ChromaDB | 实时的展品专业知识向量检索 |
 | **嵌入模型** | BGE-Small-ZH | 本地化的中文语义向量化 |
 | **前端展现** | HTML + Vue 3 | 现代、组件化的交互式仪表盘与视觉反馈 |
+| **语音识别** | 百度语音 API | 高精度的云端语音识别服务 |
+| **语音合成** | TTS 服务 | 自然的流式语音输出 |
